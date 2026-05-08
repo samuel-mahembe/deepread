@@ -221,3 +221,5 @@ __marimo__/
 # project files
 venv/
 .env
+
+data/
