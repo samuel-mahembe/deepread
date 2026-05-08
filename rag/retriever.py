@@ -22,7 +22,7 @@ def _get_collection(session_id: str):
     """Get (or create) the Chroma collection for this user session."""
     client = chromadb.PersistentClient(path=CHROMA_DIR)
     collection_name = f"session_{session_id}"
-    return client.get_or_create_collection(name=collection_name)
+    return client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
 
 
 def embed(texts: list[str]) -> list[list[float]]:

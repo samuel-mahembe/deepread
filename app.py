@@ -1,7 +1,6 @@
 """
-app.py — Streamlit UI for AskMyDocs (dynamic ingestion).
-
-Users provide their own URLs, ingestion runs, then they can ask questions.
+ Streamlit UI for DeepRead (dynamic ingestion).
+    Users provide their own URLs, ingestion runs, then they can ask questions.
 """
 
 import uuid
@@ -36,29 +35,52 @@ if "question" not in st.session_state:
 st.title("📚 DeepRead")
 st.markdown("Paste URLs, ask questions. Powered by RAG.")
 st.markdown(
-    "[GitHub](https://github.com/YOUR_USERNAME/deepread) · "
+    "[GitHub](https://github.com/samuel-mahembe/deepread) · "
     "Built with sentence-transformers + ChromaDB + Groq"
 )
 st.divider()
 
-
 # ---------- STAGE 1: INGEST ----------
 if st.session_state.stage == "ingest":
     st.markdown("### Step 1: Add your sources")
-    st.caption("Paste one URL per line. We'll fetch and index them.")
+    st.caption("Add the URLs you want to ask questions about.")
     
-    urls_text = st.text_area(
-        "URLs",
-        height=150,
-        placeholder="https://requests.readthedocs.io/en/latest/user/quickstart/\nhttps://requests.readthedocs.io/en/latest/user/advanced/",
-        label_visibility="collapsed",
-    )
+    # Initialize URL list with one empty input on first load
+    if "url_inputs" not in st.session_state:
+        st.session_state.url_inputs = [""]
     
-    if st.button("Ingest URLs", type="primary", use_container_width=True):
-        urls = [u.strip() for u in urls_text.split("\n") if u.strip()]
+    # Render an input field for each URL in the list
+    for i in range(len(st.session_state.url_inputs)):
+        col1, col2 = st.columns([10, 1])
+        
+        st.session_state.url_inputs[i] = col1.text_input(
+            f"URL {i + 1}",
+            value=st.session_state.url_inputs[i],
+            key=f"url_input_{i}",
+            placeholder="https://...",
+            label_visibility="collapsed",
+        )
+        
+        # Show remove button only if there's more than one input
+        if len(st.session_state.url_inputs) > 1:
+            if col2.button("✕", key=f"remove_{i}", help="Remove this URL"):
+                st.session_state.url_inputs.pop(i)
+                st.rerun()
+        else:
+            col2.write("")  # Empty space so the layout stays aligned
+    
+    # Action buttons
+    col_add, col_ingest = st.columns([1, 2])
+    
+    if col_add.button("➕ Add URL", use_container_width=True):
+        st.session_state.url_inputs.append("")
+        st.rerun()
+    
+    if col_ingest.button("Ingest URLs", type="primary", use_container_width=True):
+        urls = [u.strip() for u in st.session_state.url_inputs if u.strip()]
         
         if not urls:
-            st.error("Please paste at least one URL.")
+            st.error("Please add at least one URL.")
         else:
             all_chunks = []
             progress = st.progress(0.0, text="Starting...")
@@ -103,6 +125,7 @@ elif st.session_state.stage == "ask":
             st.session_state.ingested_urls = []
             st.session_state.suggested_questions = []
             st.session_state.question = ""
+            st.session_state.url_inputs = [""]   # ← add this
             st.rerun()
     
     # Suggested questions
