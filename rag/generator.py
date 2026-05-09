@@ -7,12 +7,20 @@
 import os
 from groq import Groq
 from dotenv import load_dotenv
+import streamlit as st
 
 load_dotenv()
 
 
 # Initialize the Groq client once at module load
-_client = Groq(api_key=os.environ["GROQ_API_KEY"])
+def _get_api_key():
+    """Get Groq API key from Streamlit secrets (cloud) or env (local)."""
+    try:
+        return st.secrets["GROQ_API_KEY"]
+    except (FileNotFoundError, KeyError):
+        return os.environ["GROQ_API_KEY"]
+
+_client = Groq(api_key=_get_api_key())
 
 # The model — Groq offers Llama 3.3 70B free and very fast
 MODEL = "llama-3.3-70b-versatile"
