@@ -3,6 +3,11 @@
     Users provide their own URLs, ingestion runs, then they can ask questions.
 """
 
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+
 import uuid
 import streamlit as st
 from rag.chunker import chunk_url
