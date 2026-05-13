@@ -17,6 +17,14 @@ Users dynamically add URLs they want to query.
 
 ![Ingest stage](demo/ingest.png)
 
+#### A note on scraping
+
+Not every site can be scraped. Some block automated requests with a `403 Forbidden` response 
+(common for sites with bot protection, paywalls, or strict CDN rules). DeepRead surfaces this 
+clearly rather than silently failing.
+
+![403 error example](demo/403_error.png)
+
 ### Step 2: Get suggested questions and ask
 After ingestion, the app uses an LLM to generate suggested questions based on the actual content, then lets users ask anything.
 
