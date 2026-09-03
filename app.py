@@ -1,44 +1,62 @@
 """
- Streamlit UI for DeepRead (dynamic ingestion).
-    Users provide their own URLs, ingestion runs, then they can ask questions.
+Streamlit UI for DeepRead.
+
+This file only renders widgets, manages session state, and calls into
+src.rag.pipeline — it contains no ingestion, retrieval, or generation logic
+itself. That logic lives in src/ and is unit/integration tested independently
+of Streamlit.
 """
 
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+from __future__ import annotations
 
+import sys
+
+try:
+    # Streamlit Community Cloud's base image ships a system sqlite3 too old
+    # for ChromaDB. pysqlite3-binary bundles a modern build to swap in — but
+    # it only publishes Linux wheels, so this is a no-op on local Windows/Mac
+    # dev, where the system sqlite3 is already new enough.
+    __import__("pysqlite3")
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
 
 import uuid
-import streamlit as st
-from rag.chunker import chunk_url
-from rag.retriever import index_chunks, search, clear_session
-from rag.generator import generate_answer, suggest_questions, get_sample_chunks
 
+import streamlit as st
+
+from src.models.schemas import SourceType
+from src.rag import pipeline
 
 st.set_page_config(page_title="DeepRead", page_icon="📚", layout="centered")
 
-
-# Each user gets a unique session_id — used to scope their ChromaDB collection
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
-
-# Track app state: "ingest" (waiting for URLs) or "ask" (ready to answer)
 if "stage" not in st.session_state:
     st.session_state.stage = "ingest"
-
-if "ingested_urls" not in st.session_state:
-    st.session_state.ingested_urls = []
-
+if "ingested_sources" not in st.session_state:
+    st.session_state.ingested_sources = []  # list[(label, icon)]
 if "suggested_questions" not in st.session_state:
     st.session_state.suggested_questions = []
-
 if "question" not in st.session_state:
     st.session_state.question = ""
+if "url_inputs" not in st.session_state:
+    st.session_state.url_inputs = [""]
+
+SOURCE_ICON = {SourceType.URL: "🌐", SourceType.FILE: "📄"}
 
 
-# Header
+def _reset_session() -> None:
+    pipeline.clear_session(st.session_state.session_id)
+    st.session_state.stage = "ingest"
+    st.session_state.ingested_sources = []
+    st.session_state.suggested_questions = []
+    st.session_state.question = ""
+    st.session_state.url_inputs = [""]
+
+
 st.title("📚 DeepRead")
-st.markdown("Paste URLs, ask questions. Powered by RAG.")
+st.markdown("Bring documents or URLs, ask questions, get grounded answers with citations.")
 st.markdown(
     "[GitHub](https://github.com/samuel-mahembe/deepread) · "
     "Built with sentence-transformers + ChromaDB + Groq"
@@ -48,92 +66,96 @@ st.divider()
 # ---------- STAGE 1: INGEST ----------
 if st.session_state.stage == "ingest":
     st.markdown("### Step 1: Add your sources")
-    st.caption("Add the URLs you want to ask questions about.")
-    
-    # Initialize URL list with one empty input on first load
-    if "url_inputs" not in st.session_state:
-        st.session_state.url_inputs = [""]
-    
-    # Render an input field for each URL in the list
-    for i in range(len(st.session_state.url_inputs)):
-        col1, col2 = st.columns([10, 1])
-        
-        st.session_state.url_inputs[i] = col1.text_input(
-            f"URL {i + 1}",
-            value=st.session_state.url_inputs[i],
-            key=f"url_input_{i}",
-            placeholder="https://...",
+    st.caption("Add web page URLs and/or upload documents (PDF, DOCX, TXT, MD).")
+
+    url_tab, file_tab = st.tabs(["🌐 URLs", "📄 Upload files"])
+
+    with url_tab:
+        for i in range(len(st.session_state.url_inputs)):
+            col1, col2 = st.columns([10, 1])
+            st.session_state.url_inputs[i] = col1.text_input(
+                f"URL {i + 1}",
+                value=st.session_state.url_inputs[i],
+                key=f"url_input_{i}",
+                placeholder="https://...",
+                label_visibility="collapsed",
+            )
+            if len(st.session_state.url_inputs) > 1:
+                if col2.button("✕", key=f"remove_{i}", help="Remove this URL"):
+                    st.session_state.url_inputs.pop(i)
+                    st.rerun()
+            else:
+                col2.write("")
+
+        if st.button("➕ Add another URL"):
+            st.session_state.url_inputs.append("")
+            st.rerun()
+
+    with file_tab:
+        uploaded_files = st.file_uploader(
+            "Upload documents",
+            type=["pdf", "docx", "txt", "md"],
+            accept_multiple_files=True,
             label_visibility="collapsed",
         )
-        
-        # Show remove button only if there's more than one input
-        if len(st.session_state.url_inputs) > 1:
-            if col2.button("✕", key=f"remove_{i}", help="Remove this URL"):
-                st.session_state.url_inputs.pop(i)
-                st.rerun()
-        else:
-            col2.write("")  # Empty space so the layout stays aligned
-    
-    # Action buttons
-    col_add, col_ingest = st.columns([1, 2])
-    
-    if col_add.button("➕ Add URL", use_container_width=True):
-        st.session_state.url_inputs.append("")
-        st.rerun()
-    
-    if col_ingest.button("Ingest URLs", type="primary", use_container_width=True):
+        st.caption("Max 10MB per file.")
+
+    if st.button("Ingest sources", type="primary", use_container_width=True):
         urls = [u.strip() for u in st.session_state.url_inputs if u.strip()]
-        
-        if not urls:
-            st.error("Please add at least one URL.")
+        files = uploaded_files or []
+
+        if not urls and not files:
+            st.error("Add at least one URL or upload a file.")
         else:
-            all_chunks = []
+            outcomes = []
+            total_steps = len(urls) + len(files)
             progress = st.progress(0.0, text="Starting...")
-            
-            for i, url in enumerate(urls):
-                progress.progress(
-                    i / len(urls),
-                    text=f"Fetching {url[:60]}..."
+            step = 0
+
+            for url in urls:
+                progress.progress(step / total_steps, text=f"Fetching {url[:60]}...")
+                outcome = pipeline.ingest_url(url, st.session_state.session_id)
+                outcomes.append(outcome)
+                step += 1
+
+            for file in files:
+                progress.progress(step / total_steps, text=f"Reading {file.name}...")
+                outcome = pipeline.ingest_file(file, st.session_state.session_id)
+                outcomes.append(outcome)
+                step += 1
+
+            succeeded = [o for o in outcomes if o.success]
+            failed = [o for o in outcomes if not o.success]
+
+            for o in failed:
+                st.warning(f"Skipped **{o.source}**: {o.error}")
+
+            if succeeded:
+                progress.progress(0.9, text="Generating suggested questions...")
+                st.session_state.suggested_questions = pipeline.suggest_questions_for_session(
+                    st.session_state.session_id
                 )
-                try:
-                    chunks = chunk_url(url)
-                    all_chunks.extend(chunks)
-                    st.session_state.ingested_urls.append(url)
-                except Exception as e:
-                    st.warning(f"Failed to fetch {url}: {e}")
-            
-            if all_chunks:
-                progress.progress(0.8, text=f"Embedding {len(all_chunks)} chunks...")
-                index_chunks(all_chunks, st.session_state.session_id)
-                
-                progress.progress(0.95, text="Generating suggested questions...")
-                sample = get_sample_chunks(st.session_state.session_id)
-                st.session_state.suggested_questions = suggest_questions(sample)
-                
+                for o in succeeded:
+                    is_url = any(o.source == u for u in urls)
+                    icon = SOURCE_ICON[SourceType.URL if is_url else SourceType.FILE]
+                    st.session_state.ingested_sources.append((o.source, icon))
+
                 progress.progress(1.0, text="Done!")
                 st.session_state.stage = "ask"
                 st.rerun()
             else:
-                st.error("No content could be fetched from those URLs.")
-
+                progress.empty()
+                st.error("None of the provided sources could be ingested.")
 
 # ---------- STAGE 2: ASK ----------
 elif st.session_state.stage == "ask":
-    # Show what's been ingested + option to start over
-    with st.expander(f"📥 Ingested {len(st.session_state.ingested_urls)} source(s)"):
-        for url in st.session_state.ingested_urls:
-            st.markdown(f"- {url}")
-        
-        if st.button("Start over with new URLs"):
-            clear_session(st.session_state.session_id)
-            st.session_state.stage = "ingest"
-            st.session_state.ingested_urls = []
-            st.session_state.suggested_questions = []
-            st.session_state.question = ""
-            st.session_state.url_inputs = [""]   # ← add this
+    with st.expander(f"📥 Ingested {len(st.session_state.ingested_sources)} source(s)"):
+        for source, icon in st.session_state.ingested_sources:
+            st.markdown(f"- {icon} {source}")
+        if st.button("Start over with new sources"):
+            _reset_session()
             st.rerun()
-    
-    # Suggested questions
+
     if st.session_state.suggested_questions:
         st.markdown("**Suggested questions:**")
         cols = st.columns(2)
@@ -141,41 +163,44 @@ elif st.session_state.stage == "ask":
             if cols[i % 2].button(q, key=f"sq_{i}", use_container_width=True):
                 st.session_state.question = q
                 st.rerun()
-    
-    # Question input — Streamlit forms give you Enter-to-submit for free
+
     with st.form(key="ask_form", clear_on_submit=False):
         question = st.text_input(
             "Ask a question:",
             value=st.session_state.question,
-            placeholder="What does the documentation say about...?",
+            placeholder="What do these sources say about...?",
         )
         col1, col2 = st.columns([1, 5])
         submit = col1.form_submit_button("Ask", type="primary")
         clear = col2.form_submit_button("Clear")
-    
+
     if clear:
         st.session_state.question = ""
         st.rerun()
-    
+
     if submit and question:
         st.session_state.question = question
-        
-        with st.spinner("Searching..."):
-            chunks = search(question, st.session_state.session_id, top_k=4)
-        
-        with st.spinner("Generating answer..."):
-            answer = generate_answer(question, chunks)
-        
-        st.markdown("### Answer")
-        st.markdown(answer)
-        
-        st.markdown("### Sources")
-        st.caption(f"Retrieved {len(chunks)} chunks")
-        
-        for i, chunk in enumerate(chunks, start=1):
-            with st.expander(
-                f"Source {i}: {chunk['title']} "
-                f"(similarity: {1 - chunk['distance']:.2%})"
-            ):
-                st.markdown(f"**URL:** {chunk['source_url']}")
-                st.text(chunk['text'])
+
+        with st.spinner("Searching and generating an answer..."):
+            try:
+                result = pipeline.ask(question, st.session_state.session_id)
+            except Exception as exc:
+                st.error(f"Couldn't generate an answer: {exc}")
+                result = None
+
+        if result:
+            st.markdown("### Answer")
+            st.markdown(result.answer)
+
+            st.markdown("### Sources")
+            if not result.sources:
+                st.caption("No matching content was found for this question.")
+            else:
+                st.caption(f"Retrieved {len(result.sources)} chunk(s)")
+                for i, chunk in enumerate(result.sources, start=1):
+                    icon = SOURCE_ICON[chunk.source_type]
+                    with st.expander(
+                        f"Source {i}: {icon} {chunk.title} (similarity: {chunk.similarity:.0%})"
+                    ):
+                        st.markdown(f"**{chunk.source_type.value.upper()}:** {chunk.source}")
+                        st.text(chunk.text)

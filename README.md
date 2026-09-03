@@ -1,10 +1,10 @@
 # 📚 DeepRead
 
-> A RAG-powered Q&A app where users bring their own knowledge base from external sources (urls).
+> A RAG-powered Q&A app where users bring their own knowledge base from URLs or uploaded documents.
 
 [**Live Demo**](https://your-demo-url.streamlit.app) · [**LinkedIn Post**](https://linkedin.com/in/your-profile)
 
-DeepRead is a Retrieval-Augmented Generation (RAG) application that lets users ingest arbitrary web pages and ask questions about their content. Each user gets a private, session-scoped vector index, so your sources stay separate from everyone else's.
+DeepRead is a Retrieval-Augmented Generation (RAG) application that lets users ingest web pages or upload documents (PDF, DOCX, TXT, MD) and ask questions about their content. Each user gets a private, session-scoped vector index, so your sources stay separate from everyone else's.
 
 Built as a learning project to deeply understand RAG end-to-end — from chunking and embedding to retrieval and grounded generation — without abstracting away the interesting parts.
 
@@ -13,7 +13,7 @@ Built as a learning project to deeply understand RAG end-to-end — from chunkin
 ## 🎬 Demo
 
 ### Step 1: Add your sources
-Users dynamically add URLs they want to query.
+Users dynamically add URLs and/or upload documents (PDF, DOCX, TXT, MD) they want to query.
 
 ![Ingest stage](demo/ingest.png)
 
@@ -47,9 +47,9 @@ RAG is fundamentally a **two-phase system**: an offline indexing phase that prep
 ┌─────────────────────────────────────────────────────────────────┐
 │                    PHASE 1: INGESTION (offline)                 │
 │                                                                 │
-│   User URLs ──► Scrape HTML ──► Clean text ──► Chunk ──►        │
+│   URLs/files ──► Scrape HTML or parse doc ──► Clean text ──►    │
 │                                                                 │
-│   ──► Embed (sentence-transformers) ──► Store in ChromaDB       │
+│   ──► Chunk ──► Embed (sentence-transformers) ──► ChromaDB      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -76,10 +76,13 @@ A regular LLM call answers from its training data — which is why it hallucinat
 |---|---|---|
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Free, runs locally, 384-dim, good enough for docs |
 | Vector store | ChromaDB (cosine distance) | Local, file-based, zero config |
-| LLM | Groq (Llama 3.3 70B) | Fast, generous free tier |
+| LLM | Groq (`openai/gpt-oss-120b`) | Fast, generous free tier |
 | Chunking | LangChain `RecursiveCharacterTextSplitter` | Respects paragraph and sentence boundaries |
 | UI | Streamlit | MVP-friendly, ships fast |
 | Scraping | `requests` + `BeautifulSoup` | No JS rendering needed for docs |
+| Document parsing | `pypdf`, `python-docx` | PDF and DOCX text extraction for uploads |
+
+> Groq periodically retires/renames models; if `llm_model` in `src/config/settings.py` starts 404ing, check `client.models.list()` for the current lineup.
 
 ---
 
@@ -87,23 +90,37 @@ A regular LLM call answers from its training data — which is why it hallucinat
 
 ```
 deepread/
-├── app.py                  # Streamlit UI (Phase 2 entry point)
-├── ingest.py               # Standalone CLI ingestion (optional, for testing)
-├── rag/
-│   ├── __init__.py
-│   ├── chunker.py          # URL fetching + text splitting
-│   ├── retriever.py        # Embeddings + ChromaDB read/write
-│   └── generator.py        # Prompt construction + LLM calls
+├── app.py                     # Streamlit UI — widgets + session state only
+├── src/
+│   ├── config/settings.py     # All tunables: models, chunk size, limits, timeouts
+│   ├── models/schemas.py      # Shared dataclasses (Chunk, RetrievedChunk, AnswerResult, ...)
+│   ├── ingestion/
+│   │   ├── url_loader.py      # Fetch + scrape web pages (with SSRF guards)
+│   │   ├── document_loader.py # Parse uploaded PDF/DOCX/TXT/MD
+│   │   ├── cleaner.py         # Whitespace normalization + empty-content detection
+│   │   ├── chunker.py         # Text splitting
+│   │   └── errors.py          # Shared ingestion exception types
+│   ├── embeddings/embedding_service.py
+│   ├── vectorstore/chroma_store.py   # The only module that imports chromadb directly
+│   ├── retrieval/
+│   │   ├── retriever.py       # Embed query + vector search
+│   │   └── reranker.py        # Optional cross-encoder reranking
+│   ├── generation/
+│   │   ├── prompts.py         # System prompt + context formatting
+│   │   └── llm_service.py     # The only module that talks to Groq
+│   └── rag/pipeline.py        # Orchestration layer — app.py's only entry point into src/
+├── scripts/seed.py            # CLI ingestion into a persistent shared collection
 ├── data/
-│   └── chroma_db/          # Vector store (gitignored, created on first run)
-├── demo/                   # README assets (output from running app)
-├── .env.example            # Template for environment variables (Create .env of your own !)
+│   └── chroma_db/             # Vector store (gitignored, created on first run)
+├── demo/                      # README assets (output from running app)
+├── .env.example                # Template for environment variables (Create .env of your own !)
 ├── .gitignore
 ├── requirements.txt
+├── requirements-dev.txt       # + pytest, ruff
 └── README.md
 ```
 
-Each module in `rag/` has one responsibility — `chunker` doesn't know about embeddings, `generator` doesn't know about chunking. This makes it easy to swap any piece (e.g., switch from Groq to OpenAI by editing only `generator.py`).
+Each module in `src/` has one responsibility, and `app.py` only ever calls `src.rag.pipeline` — never the lower-level modules directly. That boundary keeps the UI thin and the pipeline independently testable without Streamlit installed, and makes it easy to swap any one piece (e.g., switch from Groq to OpenAI by editing only `llm_service.py`).
 
 ---
 
@@ -152,8 +169,8 @@ On first run, the embedding model (`all-MiniLM-L6-v2`, ~90MB) downloads automati
 
 ### Try it
 
-1. Paste 1-3 documentation URLs (e.g., `https://requests.readthedocs.io/en/latest/user/quickstart/`)
-2. Click **Ingest URLs** — watch the progress bar
+1. Paste 1-3 documentation URLs (e.g., `https://requests.readthedocs.io/en/latest/user/quickstart/`) and/or upload a PDF/DOCX/TXT/MD file
+2. Click **Ingest sources** — watch the progress bar
 3. Click a suggested question or type your own
 4. See the answer with cited sources
 
@@ -167,7 +184,7 @@ A few choices that shaped the project, with the tradeoffs:
 
 **Session-scoped vector collections.** Every user gets a unique `session_<uuid>` collection in ChromaDB so they don't see each other's sources. Simple and effective; would need rethinking at real scale.
 
-**500-token chunks with 50-token overlap.** Smaller chunks = sharper retrieval but lost context. Larger chunks = more context but fuzzier embeddings. 500/50 is a sweet spot for prose. I tuned this empirically on a few test queries.
+**500-character chunks with 50-character overlap.** Smaller chunks = sharper retrieval but lost context. Larger chunks = more context but fuzzier embeddings. 500/50 is a sweet spot for prose. I tuned this empirically on a few test queries.
 
 **Cosine distance, not L2.** ChromaDB defaults to L2 (Euclidean) which can produce distances > 1.0 — leading to confusing negative similarity percentages. Setting `hnsw:space=cosine` keeps similarity in [0%, 100%].
 
@@ -175,6 +192,16 @@ A few choices that shaped the project, with the tradeoffs:
 
 ---
 
+## 🔒 Security
+
+DeepRead fetches URLs and parses files supplied by anonymous users, so a few things are deliberately hardened:
+
+- **SSRF protection.** Before fetching a URL, `src/ingestion/url_loader.py` resolves its hostname and rejects private, loopback, link-local, reserved, and multicast IP ranges — so the app can't be used as a proxy to reach internal network services.
+- **Resource limits.** URL responses and uploaded files are capped (`max_url_content_bytes`, `max_file_size_bytes` in `src/config/settings.py`); URL fetches are also streamed and cut off mid-download rather than buffered fully first.
+- **Prompt injection mitigation.** Retrieved content is passed to the LLM in a clearly delimited, explicitly-labeled `CONTEXT` block, separate from the system instructions (see `src/generation/prompts.py`). This is a real, cheap mitigation — not a guarantee. An LLM can't fully distinguish instructions from data within one context window, so treat ingested content as still capable of influencing output, and don't feed the app sources you don't trust at all.
+- **Session isolation.** Each browser session gets its own ChromaDB collection (`session_<uuid>`); sessions can't read each other's ingested content.
+
+---
 
 ## 📝 License
 
