@@ -115,10 +115,14 @@ deepread/
 ├── demo/                      # README assets (output from running app)
 ├── .env.example                # Template for environment variables (Create .env of your own !)
 ├── .gitignore
-├── requirements.txt
-├── requirements-dev.txt       # + pytest, ruff
+├── requirements.txt            # Runtime dependencies — canonical, used by local dev, Docker, and Streamlit Cloud
+├── requirements-dev.txt        # Runtime + pytest/ruff, via `-r requirements.txt`
+├── Dockerfile
+├── .dockerignore
 └── README.md
 ```
+
+There is exactly one dependency source of truth: `requirements.txt`. `requirements-dev.txt` doesn't duplicate it — it starts with `-r requirements.txt` and adds `pytest`, `pytest-mock`, `pytest-cov`, `ruff` on top. Local dev, Docker, and Streamlit Community Cloud all install from `requirements.txt`; anyone running tests installs from `requirements-dev.txt` instead, into the same single virtual environment — there's no separate test-only environment.
 
 Each module in `src/` has one responsibility, and `app.py` only ever calls `src.rag.pipeline` — never the lower-level modules directly. That boundary keeps the UI thin and the pipeline independently testable without Streamlit installed, and makes it easy to swap any one piece (e.g., switch from Groq to OpenAI by editing only `llm_service.py`).
 
@@ -138,18 +142,22 @@ Each module in `src/` has one responsibility, and `app.py` only ever calls `src.
 git clone https://github.com/YOUR_USERNAME/deepread.git
 cd deepread
 
-# 2. Create and activate a virtual environment
+# 2. Create and activate a virtual environment (the project standardizes on venv/)
 python -m venv venv
 source venv/bin/activate         # Mac/Linux
 # venv\Scripts\activate          # Windows
 
 # 3. Install dependencies
 pip install -r requirements.txt
+# ...or, to also run tests/lint (installs requirements.txt plus pytest/ruff):
+# pip install -r requirements-dev.txt
 
 # 4. Set up your environment variables
 cp .env.example .env
 # Open .env and add your Groq API key
 ```
+
+`venv/` is the one supported virtual environment for this project — don't create a second one (e.g. `.venv/`) alongside it, since a stray extra environment with a different package set is what caused dependency drift previously.
 
 Your `.env` should look like:
 
@@ -173,6 +181,23 @@ On first run, the embedding model (`all-MiniLM-L6-v2`, ~90MB) downloads automati
 2. Click **Ingest sources** — watch the progress bar
 3. Click a suggested question or type your own
 4. See the answer with cited sources
+
+### Run with Docker
+
+```bash
+docker build -t deepread .
+docker run -p 8501:8501 --env-file .env deepread
+```
+
+The image installs from the same `requirements.txt` used locally and on Streamlit Cloud, so there's no separate dependency list to keep in sync.
+
+### Development (tests, lint)
+
+```bash
+pip install -r requirements-dev.txt
+pytest      # currently no unit tests are checked in yet — the suite is wired up but empty
+ruff check src/ app.py scripts/
+```
 
 ---
 
