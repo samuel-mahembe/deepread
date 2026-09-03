@@ -58,8 +58,7 @@ def _reset_session() -> None:
 st.title("📚 DeepRead")
 st.markdown("Bring documents or URLs, ask questions, get grounded answers with citations.")
 st.markdown(
-    "[GitHub](https://github.com/samuel-mahembe/deepread) · "
-    "Built with sentence-transformers + ChromaDB + Groq"
+    "[GitHub](https://github.com/samuel-mahembe/deepread) · " "Built with sentence-transformers + ChromaDB + Groq"
 )
 st.divider()
 
@@ -199,8 +198,6 @@ elif st.session_state.stage == "ask":
                 st.caption(f"Retrieved {len(result.sources)} chunk(s)")
                 for i, chunk in enumerate(result.sources, start=1):
                     icon = SOURCE_ICON[chunk.source_type]
-                    with st.expander(
-                        f"Source {i}: {icon} {chunk.title} (similarity: {chunk.similarity:.0%})"
-                    ):
+                    with st.expander(f"Source {i}: {icon} {chunk.title} (similarity: {chunk.similarity:.0%})"):
                         st.markdown(f"**{chunk.source_type.value.upper()}:** {chunk.source}")
                         st.text(chunk.text)

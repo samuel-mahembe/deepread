@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Fixture Page — Chunking and Retrieval</title>
+    <style>body { font-family: sans-serif; }</style>
+    <script>console.log("tracking pixel nonsense");</script>
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/">Home</a>
+            <a href="/docs">Docs</a>
+        </nav>
+    </header>
+
+    <main>
+        <h1>Chunking and Retrieval</h1>
+        <p>
+            A vector store indexes chunks of text so that a query can find the
+            passages most similar to it. Cosine similarity is used to rank
+            candidates, and only the top few results are returned.
+        </p>
+        <p>
+            Retrieval quality depends heavily on chunk size. Chunks that are
+            too large dilute the embedding with irrelevant content; chunks
+            that are too small lose surrounding context.
+        </p>
+    </main>
+
+    <footer>
+        <p>Copyright fixture footer — should not appear in extracted text.</p>
+    </footer>
+</body>
+</html>

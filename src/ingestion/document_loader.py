@@ -28,8 +28,7 @@ def validate_file(file: UploadedFileLike) -> None:
     extension = Path(file.name).suffix.lower()
     if extension not in settings.allowed_file_extensions:
         raise InvalidFileError(
-            f"Unsupported file type '{extension}'. "
-            f"Allowed types: {', '.join(settings.allowed_file_extensions)}."
+            f"Unsupported file type '{extension}'. " f"Allowed types: {', '.join(settings.allowed_file_extensions)}."
         )
 
     size = len(file.getvalue())

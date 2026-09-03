@@ -49,9 +49,7 @@ class Settings:
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # --- Reranking (optional, off by default: extra model load + latency) ---
-    enable_reranking: bool = field(
-        default_factory=lambda: _get_secret("ENABLE_RERANKING", "false") == "true"
-    )
+    enable_reranking: bool = field(default_factory=lambda: _get_secret("ENABLE_RERANKING", "false") == "true")
     reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # --- Vector store ---

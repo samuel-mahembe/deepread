@@ -80,9 +80,7 @@ def _fetch_raw(url: str) -> tuple[str, bytes]:
         body.extend(piece)
         if len(body) > limit:
             response.close()
-            raise ContentTooLargeError(
-                f"{url} exceeds the {limit // 1_000_000}MB content limit."
-            )
+            raise ContentTooLargeError(f"{url} exceeds the {limit // 1_000_000}MB content limit.")
 
     return content_type, bytes(body)
 

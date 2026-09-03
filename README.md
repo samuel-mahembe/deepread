@@ -110,6 +110,7 @@ deepread/
 │   │   └── llm_service.py     # The only module that talks to Groq
 │   └── rag/pipeline.py        # Orchestration layer — app.py's only entry point into src/
 ├── scripts/seed.py            # CLI ingestion into a persistent shared collection
+├── tests/                     # pytest suite — see "Testing" below
 ├── data/
 │   └── chroma_db/             # Vector store (gitignored, created on first run)
 ├── demo/                      # README assets (output from running app)
@@ -119,6 +120,7 @@ deepread/
 ├── requirements-dev.txt        # Runtime + pytest/ruff, via `-r requirements.txt`
 ├── Dockerfile
 ├── .dockerignore
+├── pyproject.toml             # pytest/ruff/coverage config ONLY — not a dependency manifest
 └── README.md
 ```
 
@@ -191,12 +193,57 @@ docker run -p 8501:8501 --env-file .env deepread
 
 The image installs from the same `requirements.txt` used locally and on Streamlit Cloud, so there's no separate dependency list to keep in sync.
 
-### Development (tests, lint)
+### Testing
 
 ```bash
+# 1. Install dev dependencies (adds pytest/ruff on top of requirements.txt)
 pip install -r requirements-dev.txt
-pytest      # currently no unit tests are checked in yet — the suite is wired up but empty
-ruff check src/ app.py scripts/
+
+# 2. Run the test suite
+pytest
+
+# 3. Run it with coverage
+pytest --cov=src --cov-report=term-missing
+```
+
+The default `pytest` run is fully offline and deterministic: it never calls the
+real Groq API, never touches the network, and never reads or writes your local
+`.env` or `data/chroma_db`. The Groq client, the embedding model (in most
+tests), and outbound HTTP are all replaced with small fakes defined in
+`tests/conftest.py`; ChromaDB itself is real, but points at a fresh temp
+directory per test.
+
+```
+tests/
+├── conftest.py              # shared fixtures: fake Groq client, fake HTTP/DNS,
+│                             # deterministic embeddings, isolated Chroma dir
+├── fixtures/                # sample_document.txt, sample.html
+├── unit/                    # config, ingestion, chunking, security, retrieval,
+│                             # reranking, generation — one concern per file
+├── integration/
+│   ├── test_pipeline.py     # full ingest -> chunk -> index -> retrieve ->
+│   │                         # generate -> answer path, mocked LLM/network
+│   └── test_embeddings_real.py  # the one place the REAL embedding model runs
+└── e2e/
+    └── test_golden_path_live.py  # real Wikipedia + real Groq — see below
+```
+
+**The one exception is the live golden-path test.** `tests/e2e/test_golden_path_live.py`
+hits real Wikipedia and the real Groq API — it's the same check that was used
+to manually verify the app end-to-end. It's marked `@pytest.mark.live` and
+excluded by default (see `addopts` in `pyproject.toml`), so it never runs in
+a normal `pytest` invocation, CI, or anywhere without a real `GROQ_API_KEY`.
+Run it explicitly when you want the real thing:
+
+```bash
+pytest -m live
+```
+
+Lint and format checks (also part of `requirements-dev.txt`):
+
+```bash
+ruff check .
+ruff format --check .
 ```
 
 ---

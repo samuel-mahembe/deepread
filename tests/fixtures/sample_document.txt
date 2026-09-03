@@ -1,0 +1,18 @@
+DeepRead Fixture Document
+
+DeepRead is a retrieval-augmented generation application. Users bring their
+own sources — web pages or uploaded files — and the app answers questions
+grounded only in that material.
+
+Ingestion has two entry points. URL ingestion fetches a web page, strips
+navigation and script tags, and extracts the remaining text. File ingestion
+parses PDF, DOCX, TXT, or Markdown uploads directly.
+
+After ingestion, the cleaned text is split into overlapping chunks. Each
+chunk is embedded and stored in a session-scoped ChromaDB collection, keyed
+by a UUID so that one user's sources are never visible to another user.
+
+At query time, the question is embedded with the same model, the vector
+store returns the most similar chunks, and those chunks are passed to the
+language model as labeled context. The model is instructed to answer only
+from that context and to cite which source it used.

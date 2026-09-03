@@ -1,0 +1,23 @@
+# Tool configuration only — NOT a dependency manifest.
+# requirements.txt / requirements-dev.txt remain the single source of truth
+# for dependencies (see README's "Project structure" section).
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "live: hits a real network + the real Groq API; requires GROQ_API_KEY and internet access, skipped by default",
+]
+addopts = "-m 'not live'"
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]

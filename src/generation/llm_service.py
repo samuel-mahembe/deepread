@@ -18,9 +18,7 @@ class LLMConfigurationError(RuntimeError):
 @lru_cache(maxsize=1)
 def _get_client() -> Groq:
     if not settings.groq_api_key:
-        raise LLMConfigurationError(
-            "GROQ_API_KEY is not set. Add it to .env (local) or Streamlit secrets (cloud)."
-        )
+        raise LLMConfigurationError("GROQ_API_KEY is not set. Add it to .env (local) or Streamlit secrets (cloud).")
     return Groq(api_key=settings.groq_api_key)
 
 
@@ -37,7 +35,11 @@ def generate_answer(question: str, chunks: list[RetrievedChunk]) -> str:
         max_tokens=settings.llm_max_tokens,
         timeout=settings.llm_request_timeout_seconds,
     )
-    return response.choices[0].message.content
+    # The API can return null content (e.g. a filtered/refused completion) even
+    # on a 200 response, which would otherwise violate this function's `str`
+    # return type and break callers like `st.markdown(result.answer)`.
+    content = response.choices[0].message.content
+    return content or "The model returned an empty response. Please try again."
 
 
 def suggest_questions(chunks: list[RetrievedChunk], n: int = 4) -> list[str]:
@@ -57,7 +59,7 @@ def suggest_questions(chunks: list[RetrievedChunk], n: int = 4) -> list[str]:
         timeout=settings.llm_request_timeout_seconds,
     )
 
-    raw = response.choices[0].message.content
+    raw = response.choices[0].message.content or ""
     questions = [q.strip() for q in raw.split("\n") if q.strip()]
     questions = [q.lstrip("0123456789.-) ").strip() for q in questions]
     return questions[:n]
